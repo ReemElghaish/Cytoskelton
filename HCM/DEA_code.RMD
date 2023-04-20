@@ -1,0 +1,149 @@
+---
+title: "cytoskeleton"
+author: "R.A"
+date: "09/05/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("D:/cytoskeleton/HCM/GSE36961")
+```
+
+```{r}
+#packages
+library(readr)
+library(limma)
+options(scipen = 99)
+```
+
+
+```{r}
+#read_the_data
+x<- read_delim("GSE36961_non-normalized.txt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+#extract_p.val
+detectionpvalues <- x[,grep('.Pval', colnames(x))]
+x <- x[,-grep('.Pval', colnames(x))]
+## tidy up final expression matrix
+gene_symbol<- x$ID_REF
+x <- data.matrix(x[,2:ncol(x)])
+rownames(x)<- gene_symbol
+```
+
+```{r}
+#read_the annotation_file
+annot_file <- read_delim("GEO36961.sdrf.txt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+#rename_the_coloumns
+x<- x[,match(annot_file$`Comment [Sample_description]`,colnames(x))]
+colnames(x)<- annot_file$`Source Name`
+colnames(x) <- gsub('1', '',colnames(x))
+```
+
+
+
+```{r}
+#read_target_file and prepare Expression_matrix
+targetinfo <- readTargets(file="Targetsfile.txt", sep = '\t',row.names = NULL)
+ 
+```
+
+
+```{r}
+##Normalize_all_data
+ex_normalized <- neqc(x, offset = 16,detection.p = detectionpvalues)
+
+```
+
+```{r}
+#summarize the probes
+ex_normalized <- avereps(ex_normalized,ID=rownames(ex_normalized))
+```
+
+
+```{r}
+#match row names_of twodatasets
+ex_normalized2<- ex_normalized2[which(rownames(ex_normalized2)%in%rownames(ex_normalized)),]
+ex_normalized<- ex_normalized[which(rownames(ex_normalized)%in%rownames(ex_normalized2)),]
+ex_normalized<- ex_normalized[match(rownames(ex_normalized),rownames(ex_normalized2)),]
+#bind_the_twodatasets
+large_data<- cbind(ex_normalized,ex_normalized2)
+```
+
+```{r}
+#read_the_large_target_file
+targetinfo <- readTargets(file="target_file.txt", sep = '\t',row.names = NULL)
+```
+
+```{r}
+
+batch=targetinfo$batch
+data<- removeBatchEffect(large_data,batch=batch)
+pca=prcomp(data)
+type <- factor(targetinfo$group, levels = c("control", "HCM","HCM2","control2"))
+colType <- c("forestgreen", "red2","blue","gren")[type]
+pchType <- c(18, 16,20,22)[type]
+plot(
+    pca$x,
+    col = colType,
+    pch = pchType,
+    cex = 3.0)
+legend(
+    "bottomright",
+    bty = "n",
+    c("", ""),
+    fill = c("forestgreen", "red2","blue","green"),
+    cex = 2.0)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+#linear_model
+#linear_model
+design<- model.matrix(~0+targetinfo$group)
+colnames(design)<-c("control","HCM")
+contrasts<- makeContrasts(HCM-control,levels = design)
+data.fit<- lmFit(as.matrix(data),design)
+data.fit.con = contrasts.fit(data.fit,contrasts)
+data.fit.eb = eBayes(data.fit.con)
+tab = topTable(data.fit.eb,adjust="fdr",p.value = 0.05,number = Inf,lfc = 1)
+
+```
+
+
+
+```{r}
+#filter cyto_skeleton_gene
+cytoskeleton <- read_excel("D:/cytoskeleton/cyto_genes.xlsx")
+View(cytoskeleton)
+cyto_DEGS<- tab[which(rownames(tab)%in%cytoskeleton$gene),]
+  
+```
+
+
+```{r}
+
+Model_data<- data[which(rownames(data)%in%cytoskeleton$SYMBOL),]
+Model_data<- t(Model_data)
+Model_data<- as.data.frame(Model_data)
+Model_data$group<- targetinfo$group
+write.csv(Model_data,file="Model_data.csv")
+write.csv(tab,file="all_degs.csv")
+write.csv(cyto_DEGS,file="cyto_degs.csv")
+
+
+```
+
