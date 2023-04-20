@@ -1,0 +1,170 @@
+---
+title: "diabetes"
+author: "R.A"
+date: "15/06/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("D:/cytoskeleton/diabetes")
+```
+
+
+```{r}
+#packages
+library(DESeq2)
+library(tidyverse)
+library(dplyr)
+library(readr)
+library(org.Hs.eg.db)
+```
+
+
+```{r}
+#import_the_data
+data<- read_delim("D:/cytoskeleton/diabetes/GSE164416.txt", delim = "\t", escape_double = FALSE, trim_ws = TRUE)
+
+exp_data<- data[,-1]
+rownames(exp_data)<- data$ensembl
+#read_meta_data
+Meta_data <- read.csv("Meta_daata.csv",header = TRUE)
+
+#remove_the_signs_in-sample_title 
+Meta_data$Sample_title<- gsub("Islets_","",Meta_data$Sample_title)
+
+ Meta_data$Sample_title<- str_remove(Meta_data$Sample_title, "\\_.*")
+
+```
+
+
+```{r}
+#match_meta_data_exp_data
+#relevel the Meta_data_control as reference 
+all(Meta_data$Sample_title%in% colnames(exp_data))
+
+all(Meta_data$Sample_title == colnames(exp_data))
+Meta_data <- Meta_data%>% arrange(Meta_data$group)
+exp_data <- dplyr::select(exp_data, Meta_data$Sample_title)
+rownames(exp_data)<- data$ensembl
+## convert group to factor to define the reference group which is Control
+#filter_the_data_for type2 samples
+group<- c("Normal","Type2")
+Meta_data_filtered<- Meta_data[which(Meta_data$group%in%group),]
+
+exp_data_filtered<- exp_data[,which(colnames(exp_data)%in%Meta_data_filtered$Sample_title)]
+rownames(exp_data_filtered)<- rownames(exp_data)
+Meta_data_filtered$Sample_type<- as.factor(Meta_data_filtered$Sample_type)
+rownames(Meta_data_filtered)<- Meta_data_filtered$Sample_title
+```
+
+```{r}
+dds <- DESeqDataSetFromMatrix(exp_data_filtered,
+                              Meta_data_filtered,
+                              design = ~Sample_type)
+
+dds <- DESeq(dds)
+
+```
+
+
+```{r}
+## Define your disease group first, then your control (Contrast define)
+Contrast <- c("Sample_type", "Patient", "Control")
+
+## Getting DEGs with 0.05  
+res.table <- results(dds, contrast=Contrast, alpha = 0.05,tidy = TRUE)
+summary(res.table)
+
+
+
+```
+
+
+
+```{r}
+padj.cutoff <- 0.05
+lfc.cutoff <- 1
+
+## Subsetting table for DEGs values only
+signDEG <- res.table %>%
+  filter(padj < padj.cutoff & abs(log2FoldChange) > lfc.cutoff)
+#map_id_tosymbol
+signDEG$gene_symbol<-mapIds(org.Hs.eg.db,
+                            keys=signDEG$row,
+                            column="SYMBOL",
+                            keytype="ENSEMBL",
+                      multiVals="first")
+
+```
+
+
+
+
+```{r}
+signDEG<- drop_na(signDEG)
+cyto_degs<- signDEG[which(signDEG$gene_symbol%in%gene_list$SYMBOL),]
+
+
+write.csv(cyto_degs,file="cyto_degs.csv")
+write.csv(signDEG,file="all_degs.csv")
+```
+
+
+```{r}
+## extracting normalized counts and saving them
+normalized.counts <- counts(dds, normalized=TRUE)
+gene_list$ensemb<- mapIds(org.Hs.eg.db,
+                            keys=gene_list$SYMBOL,
+                            column="ENSEMBL",
+                            keytype="SYMBOL",
+                      multiVals="first")
+cyto_data<- as.data.frame(normalized.counts[which(rownames(normalized.counts)%in%gene_list$ensemb),])
+
+cyto_data$gene<- mapIds(org.Hs.eg.db,
+                            keys=rownames(cyto_data),
+                            column="SYMBOL",
+                            keytype="ENSEMBL",
+                      multiVals="first")
+rownames(cyto_data)<- cyto_data$gene
+cyto_data<- cyto_data[,-58]
+cyto_data<- as.data.frame(t(cyto_data))
+cyto_data$group<- Meta_data_filtered$Sample_type
+
+write.csv(cyto_data, file="cyto_counts.csv")
+```
+
+
+
+```{r}
+group=c("Type2","Normal")
+meta_data_filtered<- Meta_data[which(Meta_data$group%in%group),]
+exp_data_filtered<- exp_data[,which(colnames(exp_data)%in%meta_data_filtered$Sample_title)]
+
+#relevel the Meta_data_control as reference 
+all(meta_data_filtered$Sample_title%in% colnames(exp_data_filtered))
+
+all(meta_data_filtered$Sample_title == colnames(exp_data_filtered))
+
+```
+
+
+```{r}
+dds <- DESeqDataSetFromMatrix(exp_data_filtered,
+                              meta_data_filtered,
+                              design = ~ Sample_type)
+
+dds <- DESeq(dds)
+
+## Define your disease group first, then your control (Contrast define)
+Contrast <- c("Sample_type", "Patient", "Control")
+
+## Getting DEGs with 0.05  
+res.table <- results(dds, contrast=Contrast, alpha = 0.05,tidy = TRUE)
+summary(res.table)
+```
+
+
