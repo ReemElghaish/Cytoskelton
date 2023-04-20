@@ -1,0 +1,168 @@
+---
+title: "Alzheimer"
+author: "R.A"
+date: "25/07/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("D:/cytoskeleton/Alzheimer")
+celpath="D:/cytoskeleton/Alzheimer"
+
+```
+
+
+```{r}
+#packages
+library(affy)
+library(readxl)
+library(tidyverse)
+library(limma)
+```
+
+
+```{r}
+#read_thefiles_of_RAW_DATA
+data<- ReadAffy(celfile.path=celpath)
+feat = data@featureData
+exp = data@experimentData
+ph = data@phenoData
+#readthe_meta_data
+ Meta_data <- read_excel("GSE5281_sample_characteristics.xls")
+ 
+```
+
+```{r}
+data.rma = affy::rma(data)
+data.matrix = exprs(data.rma)
+
+```
+
+```{r}
+#check_missing_values
+table(rowSums(is.na(data.matrix)))
+table(colSums(is.na(data.matrix)))
+```
+
+
+```{r}
+#plotting the data 
+boxplot(data.matrix,col=as.factor(Meta_data$`Sample Description:`))
+par(mfrow=c(1,2))
+hist(data.matrix[,1],col=2)
+hist(data.matrix[,2],col=3)
+```
+
+
+```{r}
+#filter_low_intensities_probes
+dim(data.matrix)
+edata_median<-rowMedians(data.matrix)
+hist(edata_median,col=4)
+abline(v=4,col=2)
+no_of_samples<- table(Meta_data$`Sample Description:`)
+samples_cutoff <- min(no_of_samples)
+man_threshold <- 4
+idx_man_threshold <- apply(data.matrix, 1,
+                              function(x){
+                             sum(x > man_threshold) >= samples_cutoff})
+ table(idx_man_threshold)
+data_filtered <- subset(data.matrix, idx_man_threshold)
+dim(data_filtered)
+
+```
+
+```{r}
+#annotation_of_features 
+require("biomaRt")
+mart <- useMart("ENSEMBL_MART_ENSEMBL")
+mart <- useDataset("hsapiens_gene_ensembl", mart)
+annotLookup <- getBM(mart=mart, attributes=c("affy_hg_u133_plus_2", "external_gene_name"), filter="affy_hg_u133_plus_2", values=rownames(data.matrix), uniqueRows=TRUE)
+annotLookup<- read.csv("annotLookup.csv")
+```
+
+```{r}
+#filter_annotation
+
+anno_grouped <- dplyr::group_by(annotLookup, affy_hg_u133_plus_2)
+
+anno_summarized <- dplyr::summarize(anno_grouped, 
+                                    no_of_matches = n_distinct(external_gene_name))
+head(anno_summarized)
+
+anno_filtered <- filter(anno_summarized, no_of_matches > 1)
+
+probe_stats <- anno_filtered 
+nrow(probe_stats)
+
+ids_to_exlude <- (featureNames(data.rma) %in% probe_stats$affy_hg_u133_plus_2)
+table(ids_to_exlude)
+
+annot_final <- subset(annotLookup, !ids_to_exlude)
+
+data_filtered<- as.data.frame(data_filtered)
+
+data_filtered<- data_filtered%>%filter(rownames(data_filtered)%in%annot_final$affy_hg_u133_plus_2)
+
+#convert_the_row_names_to_gene_symbol
+annot_final<- annot_final[which(annot_final$affy_hg_u133_plus_2%in%rownames(data_filtered)),]
+#remove_probes_matched_more_than_one_gene
+annot_final<- annot_final[!duplicated(annot_final$affy_hg_u133_plus_2),]
+#match the_rownames
+data_filtered<- data_filtered[annot_final$affy_hg_u133_plus_2,]
+#average_the_multiple_probes_for_the_sames_gene
+data_filtered<- avereps(data_filtered,ID=annot_final$external_gene_name)
+colnames(data_filtered)<- gsub(".CEL","",colnames(data_filtered))
+```
+
+
+```{r}
+#PCA 
+pca(data_filtered,colvec=c('gold','skyblue'), labels=Meta_data$`Sample Description:`,controlscale=TRUE,scale=3,printres=TRUE,printwidth=25)
+
+```
+
+
+
+```{r}
+#linear_model
+design<- model.matrix(~0+Meta_data$`Sample Description:`)
+colnames(design)<-c("Control","AD")
+
+contrasts<- makeContrasts(AD-Control
+,levels = design)
+
+data_filtered<- removeBatchEffect(data_filtered, batch=Meta_data$`Organ Region:`)
+
+data.fit<- lmFit(as.matrix(data_filtered),design)
+
+data.fit.con = contrasts.fit(data.fit,contrasts)
+
+
+data.fit.eb = eBayes(data.fit.con)
+tab = topTable(data.fit.eb,adjust="fdr",p.value = 0.05,number = Inf,lfc = 1)
+
+```
+
+
+```{r}
+#findthe_cyto_degs
+cyto_genes <- read_excel("D:/cytoskeleton/gene_list.xlsx")
+cyto_degs<- tab[which(rownames(tab)%in%cyto_genes$SYMBOL),]
+cyto_data<- data_filtered[which(rownames(data_filtered)%in%cyto_genes$SYMBOL),]
+
+cyto_data<- as.data.frame(t(cyto_data))
+cyto_data$group<- Meta_data$`Sample Description:`
+
+write.csv(cyto_degs,file="cyto_degs.csv")
+write.csv(cyto_data,file = "cyto_data.csv")
+write.csv(tab,file="all_degs.csv")
+
+```
+
+
+
