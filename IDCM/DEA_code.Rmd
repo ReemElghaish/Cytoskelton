@@ -1,0 +1,139 @@
+---
+title: "ischmic"
+author: "R.A"
+date: "24/07/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("D:/cytoskeleton/ishemic")
+celpath="D:/cytoskeleton/ishemic"
+```
+
+
+```{r}
+library(affy)
+library(readxl)
+library(tidyverse)
+library(oligo)
+```
+
+
+
+```{r}
+#read_thefiles_of_RAW_DATA
+celFiles <- list.celfiles(celpath, full.names=TRUE)
+dat <- read.celfiles(list.celfiles(), pkgname = "pd.hugene11st.hs.entrezg")
+
+#background_correction and #normalization
+eset <- rma(dat)
+Meta_data<-read_excel("Meta_data.xlsx")
+```
+
+
+```{r}
+#extract_normalized_data
+ex<- exprs(eset)
+head(ex)
+#rename_the_coloumns
+colnames(ex)<- Meta_data$`!Sample_geo_accession`
+```
+
+```{r}
+#rename_the_meta_data_coloumns
+colnames(Meta_data)<- c("ID","group","gender","age")
+#remove_patterns
+Meta_data$group<- gsub("disease status:","",Meta_data$group)
+Meta_data$gender<- gsub("gender:","",Meta_data$gender)
+Meta_data$age<- gsub("age:","",Meta_data$age)
+
+```
+
+
+```{r}
+#split_the_expression_data_into_two_diseases
+group1<- c(" non-failing" ," ischemic")
+Meta_ishemic<-Meta_data%>%filter(Meta_data$group%in%group1)
+exp_ishemic<- ex[,which(colnames(ex)%in%Meta_ishemic$ID)]
+group2<- c(" non-failing"," idiopathic dilated CMP")
+Meta_dialated<-Meta_data%>%filter(Meta_data$group%in%group2)
+exp_dialated<- ex[,which(colnames(ex)%in%Meta_dialated$ID)]
+
+write.csv(exp_dialated,file="ex_dialated.csv")
+write.csv(exp_ishemic,file="exp_ishemic.csv")
+```
+
+
+```{r}
+ library(affycoretools)
+library(hugene11sthsentrezg.db)
+eset <- annotateEset(eset, hugene11sthsentrezg.db)
+feature_data<- fData(eset)
+```
+
+
+```{r}
+#filter_low_intensities_probes
+dim(exp_dialated)
+edata_median<-rowMedians(exp_dialated)
+hist(edata_median,col=4)
+abline(v=4,col=2)
+no_of_samples<- table(Meta_dialated$group)
+samples_cutoff <- min(no_of_samples)
+man_threshold <- 4
+idx_man_threshold <- apply(exp_dialated, 1,
+                              function(x){
+                             sum(x > man_threshold) >= samples_cutoff})
+ table(idx_man_threshold)
+data_filtered <- subset(exp_dialated, idx_man_threshold)
+dim(data_filtered)
+```
+
+```{r}
+all(rownames(exp_dialated) %in% feature_data$PROBEID) #same number
+
+
+ all(rownames(exp_dialated) == feature_data$PROBEID) #same number
+rownames(exp_dialated)<- feature_data$SYMBOL
+```
+
+
+
+```{r}
+#linear_model
+design<- model.matrix(~0+Meta_dialated$group)
+colnames(design)<-c("patient","normal")
+contrasts<- makeContrasts(patient-normal,levels = design)
+data.fit<- lmFit(as.matrix(data_filtered),design)
+data.fit.con = contrasts.fit(data.fit,contrasts)
+data.fit.eb = eBayes(data.fit.con)
+tab = topTable(data.fit.eb,adjust="fdr",number = Inf,lfc = 1)
+
+```
+
+```{r}
+
+gene_list <- read_excel("D:/cytoskeleton/gene_list.xlsx")
+cyto_degs<- tab[which(tab$ID%in%gene_list$SYMBOL),]
+
+cyto_data<- exp_dialated[which(rownames(exp_dialated)%in%gene_list$SYMBOL),]
+cyto_data<- as.data.frame(t(cyto_data))
+
+cyto_data$group<- Meta_dialated$group
+write.csv(cyto_degs,file="dialated_cyto_degs.csv")
+write.csv(cyto_data,file="_dialatedcyto_data.csv")
+```
+
+
+
+
+
+
+
+
+
+
